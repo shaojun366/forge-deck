@@ -59,6 +59,27 @@ FORGEDECK_TOKEN=dev node scripts/smoke.js http://127.0.0.1:8099
 - 加载不到 CodeMirror 时会用 `<textarea>` 降级，方便验证"断网也能编辑"。
 - `Ctrl+Shift+F` 搜索、`Ctrl+\`` 终端、`Ctrl+B` 编译、`Ctrl+Enter` 烧录。
 
+## 桥接（本机 USB）怎么测
+
+不需要真板子，用 Python 造个伪串口：
+
+```bash
+# 起一个会周期性输出的 pts
+python3 -c "
+import os,pty,time,tty
+m,s=pty.openpty(); tty.setraw(s); print(os.ttyname(s))
+t=time.time()
+while time.time()-t<60: os.write(m, b'hello\n') if time.time()-t<1 else None; time.sleep(0.5)
+"
+# 另开一个终端
+node bridge/serial-bridge.js --device /dev/pts/N --port 19991 --allow any
+FORGEDECK_TOKEN=dev node scripts/smoke-bridge.js http://127.0.0.1:8083
+```
+
+`scripts/smoke-bridge.js` 会自动：建伪串口 → 起 bridge → `POST /api/remote` → 校验 PTY 读写 → 端口校验 → 清理。
+
+服务端把 TCP 映射成 PTY 需要 `socat` 或 `python3`；两者都没有时 `/api/ports` 的 `backend` 会是 `none`，此时只有 `socket://host:port` 直接交给 PlatformIO 可用。
+
 ## 新增一个烧录后端的步骤
 
 1. `server/flash.js` 的 `BACKENDS` 加一行（`id` / `name` / `bins` / `note`）

@@ -35,6 +35,7 @@
   <button id="btnErase" class="danger" title="擦除芯片">擦除</button>
   <div class="grow"></div>
   <button class="ghost" id="btnDevices" title="USB / 串口设备">设备</button>
+  <button class="ghost" id="btnBridge" title="接入插在自己电脑上的板子（bridge + Tailscale）">⛓ 桥接</button>
   <button class="ghost" id="btnAdvanced" title="高级烧录">⚙︎</button>
   <span class="pill" id="tailPill" title="Tailnet 状态"><span class="dot"></span><span id="tailText">检查中</span></span>
   <span class="pill" id="whoPill">—</span>
@@ -103,6 +104,9 @@
         </select>
         <button id="serialConnect" class="primary">连接</button>
         <button id="serialReset" title="DTR 复位">↺ 复位</button>
+        <button id="btnRemote" title="接入插在你电脑上的板子（bridge）">⛓ 远端桥</button>
+        <button id="btnWebSerial" class="hidden" title="浏览器直连本机串口（Chrome/Edge）">本机 USB</button>
+        <button id="btnWebFlash" class="hidden" title="用浏览器直接烧录 ESP（esptool-js）">ESP 直烧</button>
         <label class="hint"><input type="checkbox" id="serialHex"> HEX</label>
         <label class="hint"><input type="checkbox" id="serialTime" checked> 时间戳</label>
         <button class="ghost" id="serialClear">清空</button>
@@ -124,6 +128,7 @@
     <div class="panel" data-panel="devices">
       <div class="toolbar">
         <button id="devRefresh">刷新设备</button>
+        <button id="devRemote">⛓ 远端桥接</button>
         <span class="hint" id="devHint"></span>
         <div class="grow"></div>
         <span class="hint">USB 必须插在服务器上</span>

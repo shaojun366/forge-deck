@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { fail, resolveIn } = require('./util');
+const { remoteDir } = require('./remote');
 
 const BACKENDS = [
   { id: 'platformio', name: 'PlatformIO', bins: ['pio'], note: 'ESP32/STM32/AVR/… 一把梭' },
@@ -59,10 +60,22 @@ function pickBackend(cfg, want, projectDir) {
   return 'platformio';
 }
 
-function assertPort(port) {
+const SOCKET_PORT = /^socket:\/\/([A-Za-z0-9_.-]{1,63}):(\d{2,5})$/;
+
+function assertPort(cfg, port) {
   if (!port) return '';
   const p = String(port);
-  if (!/^\/dev\/[A-Za-z0-9_./-]+$/.test(p)) fail(400, '端口路径非法');
+  // 远端 bridge 的裸 TCP：PlatformIO 支持 socket://host:port
+  const sock = p.match(SOCKET_PORT);
+  if (sock) {
+    const n = Number(sock[2]);
+    if (!(n > 0 && n < 65536)) fail(400, 'socket 端口号非法');
+    return p;
+  }
+  const rdir = remoteDir();
+  const isDev = p.startsWith('/dev/');
+  const isRemotePty = p.startsWith(rdir + path.sep);
+  if (!(isDev || isRemotePty) || !/^[A-Za-z0-9_./:-]+$/.test(p)) fail(400, '端口路径非法');
   if (!fs.existsSync(p)) fail(400, `端口不存在: ${p}`);
   return p;
 }
@@ -81,7 +94,7 @@ function buildCommand(cfg, opts) {
   const cwd = project ? assertFileWithIn(root, project, '项目目录') : root;
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) fail(400, '项目目录无效');
   const be = pickBackend(cfg, backend, cwd);
-  const P = assertPort(port);
+  const P = assertPort(cfg, port);
 
   if (kind === 'build' || kind === 'clean' || kind === 'flash' || kind === 'erase') {
     if (be === 'platformio') {

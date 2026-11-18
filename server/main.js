@@ -18,10 +18,12 @@ const { JobManager } = require('./jobs');
 const serial = require('./serial');
 const shell = require('./shell');
 const tailnet = require('./tailnet');
+const remote = require('./remote');
 
 const VERSION = '0.3.0';
 const cfg = load();
 const jobs = new JobManager(cfg);
+const remotes = new remote.RemoteRegistry(cfg);
 
 const log = (...a) => console.log(`[forge-deck ${util.stamp()}]`, ...a);
 const auth = new Auth(cfg, log);
@@ -72,6 +74,11 @@ function publicConfig() {
     pty: shell.ptyAvailable(),
     tailscaleEnabled: cfg.tailscale.enabled,
     tokenRequired: auth.tokenRequired,
+    remote: {
+      backend: remote.haveSocat() ? 'socat' : remote.havePython() ? 'python3' : 'none',
+      links: remotes.list().length,
+      dir: remote.remoteDir(),
+    },
   };
 }
 
@@ -181,8 +188,49 @@ route('GET', /^\/api\/projects\/describe$/, (req, res, m, ctx) => {
 route('GET', /^\/api\/devices$/, (req, res) => util.sendJSON(res, 200, devices.detect(cfg)));
 
 route('GET', /^\/api\/ports$/, (req, res) => {
-  const ports = devices.serialPorts().filter((p) => devices.isAllowedPort(cfg, p.device));
-  util.sendJSON(res, 200, { ports, active: serial.list(), hint: devices.detect(cfg).hint });
+  const local = devices.serialPorts().filter((p) => devices.isAllowedPort(cfg, p.device));
+  const localPorts = local.map((p) => ({
+    device: p.device,
+    label: p.label && p.label !== p.name ? `${p.device} — ${p.label}` : p.device,
+    usbId: p.usbId,
+    chips: p.chips,
+    remote: false,
+  }));
+  const remotePorts = remotes.sockets();
+  util.sendJSON(res, 200, {
+    ports: [...localPorts, ...remotePorts],
+    local: localPorts,
+    remote: remotes.list(),
+    active: serial.list(),
+    backend: remote.haveSocat() ? 'socat' : remote.havePython() ? 'python3' : 'none',
+    hint: devices.detect(cfg).hint,
+  });
+});
+
+// 远端串口桥（把本机 USB 通过 bridge + Tailscale 接进来）
+route('GET', /^\/api\/remote$/, (req, res) => {
+  util.sendJSON(res, 200, {
+    links: remotes.list(),
+    sockets: remotes.sockets(),
+    backend: remote.haveSocat() ? 'socat' : remote.havePython() ? 'python3' : 'none',
+    dir: remote.remoteDir(),
+  });
+});
+
+route('POST', /^\/api\/remote$/, async (req, res) => {
+  const body = await util.readJSON(req);
+  const host = String(body.host || '').trim();
+  const port = Number(body.port);
+  if (!remote.validateHost(host)) util.fail(400, 'host 非法（只接受主机名或 IP）');
+  if (!(port > 0 && port < 65536)) util.fail(400, 'port 非法');
+  const st = await remotes.add({ name: body.name || `${host}-${port}`, host, port });
+  if (st.error) return util.sendJSON(res, 502, st);
+  util.sendJSON(res, 201, st);
+});
+
+route('DELETE', /^\/api\/remote\/([A-Za-z0-9_.-]{1,40})$/, (req, res, m, ctx) => {
+  const ok = remotes.remove(ctx.match[1]);
+  util.sendJSON(res, ok ? 200 : 404, { ok });
 });
 
 route('GET', /^\/api\/backends$/, (req, res) => util.sendJSON(res, 200, { backends: flash.backendStatus(cfg) }));
@@ -255,7 +303,7 @@ route('POST', /^\/api\/jobs$/, async (req, res) => {
 route('POST', /^\/api\/serial\/write$/, async (req, res) => {
   const body = await util.readJSON(req);
   const dev = String(body.port || '');
-  if (!serial.validate(dev)) util.fail(400, '端口非法');
+  if (!(serial.validate(dev) || remotes.isRemotePath(dev))) util.fail(400, '端口非法');
   const s = serial.list().find((x) => x.device === dev);
   if (!s) {
     // 没有活动会话时直接写一帧（不做读取）
@@ -367,7 +415,8 @@ server.on('upgrade', (req, socket, head) => {
   if (p === '/ws/serial') {
     const dev = url.searchParams.get('port') || '';
     const baud = Number(url.searchParams.get('baud')) || cfg.serial.defaultBaud;
-    if (!serial.validate(dev) || !devices.isAllowedPort(cfg, dev)) {
+    const isRemote = remotes.isRemotePath(dev);
+    if (isRemote ? !fs.existsSync(dev) : (!serial.validate(dev) || !devices.isAllowedPort(cfg, dev))) {
       socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
       socket.destroy();
       return;

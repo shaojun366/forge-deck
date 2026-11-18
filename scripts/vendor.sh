@@ -38,6 +38,9 @@ fetch "$CM_BASE/mode/xml/xml.min.js" cm-xml.js
 fetch "$CM_BASE/mode/css/css.min.js" cm-css.js
 fetch "$CM_BASE/addon/edit/matchbrackets.js" cm-matchbrackets.js
 
+echo "→ esptool-js（Web Serial 直烧，可选）"
+fetch "https://cdn.jsdelivr.net/npm/esptool-js@0.4.5/bundle.js" esptool-bundle.js
+
 echo "→ xterm.js"
 fetch "$XT_BASE/lib/xterm.js" xterm.js
 fetch "$XT_BASE/css/xterm.css" xterm.css

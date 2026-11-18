@@ -12,3 +12,6 @@ coverage/
 web/vendor/
 workspace/**
 !workspace/.gitkeep
+
+__pycache__/
+*.pyc

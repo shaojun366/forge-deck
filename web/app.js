@@ -149,6 +149,7 @@ async function boot() {
   await Promise.all([loadTree(''), loadProjects(), loadPorts(), loadTailnetMini()]);
   await initEditor();
   initTerminalIfNeeded(false);
+  refreshWebSerialButtons();
 }
 
 // ── 文件树 ───────────────────────────────────
@@ -628,19 +629,324 @@ function selectProject(dir) {
 async function loadPorts() {
   try {
     const data = await api('/api/ports');
+    S.remoteInfo = data;
     for (const id of ['#portSel', '#serialPort']) {
       const sel = $(id);
       const keep = sel.value;
       sel.innerHTML = '<option value="">' + (id === '#portSel' ? '端口…' : '串口…') + '</option>';
       for (const p of data.ports) {
-        const label = p.label && p.label !== p.name ? `${p.device} — ${p.label}` : p.device;
+        const label = (p.remote ? '⛓ ' : '') + (p.label || p.device);
         sel.appendChild(new Option(label, p.device));
       }
       if (keep) sel.value = keep;
       if (data.ports.length && id === '#serialPort' && !sel.value) sel.value = data.ports[0].device;
     }
+    const remoteAlive = (data.remote || []).filter((l) => l.alive).length;
+    setMsg(data.ports.length
+      ? `端口 ${data.ports.length} 个（本地 ${(data.local || []).length} · 远端 ${remoteAlive}）`
+      : '没有可用端口');
   } catch (e) { /* ignore */ }
 }
+
+// ── 远端串口桥：把插在自己电脑上的板子接进来 ──
+async function loadRemotes() {
+  try {
+    const data = await api('/api/remote');
+    S.remoteLinks = data.links || [];
+    return data;
+  } catch {
+    S.remoteLinks = [];
+    return { links: [], backend: 'none' };
+  }
+}
+
+function remoteDialog() {
+  loadRemotes().then((data) => renderRemoteDialog(data));
+}
+
+function renderRemoteDialog(data) {
+  const mask = document.createElement('div');
+  mask.className = 'dialog-mask';
+  const backend = data.backend === 'none'
+    ? '<span class="tag no">缺少 socat / python3</span>'
+    : `<span class="tag ok">${escapeHtml(data.backend)}</span>`;
+  const rows = (data.links || []).map((l) => `
+    <tr>
+      <td class="mono">${escapeHtml(l.name)}</td>
+      <td class="mono">${escapeHtml(l.host)}:${l.port}</td>
+      <td><span class="tag ${l.alive ? 'ok' : 'no'}">${l.alive ? '在线' : '离线'}</span></td>
+      <td class="mono" style="font-size:11px">${escapeHtml(l.path)}</td>
+      <td><button class="ghost" data-del="${escapeHtml(l.name)}">断开</button></td>
+    </tr>`).join('');
+  mask.innerHTML = `<div class="dialog" style="width:min(720px,94vw)">
+    <h3>远端串口桥</h3>
+    <p class="hint" style="margin:0 0 10px">
+      先在<strong>插着板子的那台机器</strong>上启动桥：<br>
+      <span class="mono">node bridge/serial-bridge.js --device /dev/ttyUSB0 --port 9999</span><br>
+      再填那台机器的 Tailscale 地址（同机可达时用 <span class="mono">127.0.0.1</span> + <span class="mono">ssh -R</span>）。映射后端：${backend}
+    </p>
+    <div class="row" style="display:grid;grid-template-columns:1.4fr .7fr 1fr;gap:8px">
+      <input id="rmHost" type="text" placeholder="主机 / 100.x.y.z">
+      <input id="rmPort" type="text" placeholder="端口 9999">
+      <input id="rmName" type="text" placeholder="别名 laptop-board">
+    </div>
+    <div class="actions"><button class="ghost" data-x>关闭</button><button class="primary" data-add>接入</button></div>
+    <div class="section-title">当前桥接</div>
+    ${rows
+      ? `<table class="device-table"><thead><tr><th>别名</th><th>目标</th><th>状态</th><th>本地 PTY</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<div class="empty">还没有远端桥接</div>'}
+    <div class="hint" style="margin-top:10px">
+      接入后它会出现在端口下拉里（带 ⛓ 标记），可以直接编译烧录，也能在“串口监控”里看输出。
+    </div>
+  </div>`;
+  document.body.appendChild(mask);
+
+  $('[data-x]', mask).onclick = () => mask.remove();
+  $('[data-add]', mask).onclick = async () => {
+    const host = $('#rmHost', mask).value.trim();
+    const port = $('#rmPort', mask).value.trim();
+    const name = $('#rmName', mask).value.trim();
+    if (!host || !port) return toast('主机和端口都要填', 'err');
+    try {
+      const r = await api('/api/remote', { method: 'POST', body: { host, port: Number(port), name } });
+      if (r.alive) {
+        toast(`已接入 ${r.path}`, 'ok');
+        mask.remove();
+        await loadPorts();
+        $('#serialPort').value = r.path;
+        $('#portSel').value = r.path;
+        showPanel('serial');
+      } else {
+        toast(`已创建，但对端未响应：${r.error || '检查 bridge 是否在跑 / --allow 是否放行'}`, 'err');
+        mask.remove();
+        await loadPorts();
+      }
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  $$('[data-del]', mask).forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api('/api/remote/' + encodeURIComponent(b.dataset.del), { method: 'DELETE' });
+        toast('已断开', 'ok');
+        mask.remove();
+        await loadPorts();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  });
+}
+
+// ── Web Serial：浏览器直连本机 USB（Chrome / Edge）──
+const WSER = { port: null, reader: null, writer: null, running: false, decoder: null };
+let lineStartFlag = true;
+
+function webSerialSupported() {
+  return typeof navigator !== 'undefined' && 'serial' in navigator;
+}
+
+function refreshWebSerialButtons() {
+  const ok = webSerialSupported();
+  $('#btnWebSerial').classList.toggle('hidden', !ok);
+  $('#btnWebFlash').classList.toggle('hidden', !ok);
+  if (ok) $('#btnWebSerial').textContent = WSER.running ? '断开本机' : '本机 USB';
+}
+
+async function webSerialToggle() {
+  if (WSER.running) return webSerialStop();
+  if (!webSerialSupported()) {
+    return toast('浏览器不支持 Web Serial：需要 Chrome/Edge，且页面为 https 或 localhost', 'err');
+  }
+  if (S.serialWs) disconnectSerial();
+  try {
+    const port = await navigator.serial.requestPort();
+    const baud = Number($('#serialBaud').value) || 115200;
+    await port.open({ baudRate: baud });
+    WSER.port = port;
+    WSER.running = true;
+    WSER.decoder = new TextDecoder();
+    lineStartFlag = true;
+    refreshWebSerialButtons();
+    setSerialState(`本机 USB ${baud}`, 'ok');
+    appendSerial(`\n[本机 USB] 已连接 @ ${baud}\n`);
+    webSerialReadLoop();
+  } catch (e) {
+    toast('打开本机串口失败: ' + e.message, 'err');
+  }
+}
+
+async function webSerialReadLoop() {
+  const port = WSER.port;
+  while (port && port.readable && WSER.running) {
+    let reader;
+    try {
+      reader = port.readable.getReader();
+    } catch (e) {
+      appendSerial(`\n[本机 USB] ${e.message}\n`);
+      break;
+    }
+    WSER.reader = reader;
+    try {
+      while (WSER.running) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value && value.length) {
+          let text;
+          if ($('#serialHex').checked) {
+            text = [...value].map((b) => b.toString(16).padStart(2, '0')).join(' ') + ' ';
+          } else {
+            text = WSER.decoder.decode(value, { stream: true });
+          }
+          if ($('#serialTime').checked && lineStartFlag && text.trim()) text = `[${timeStr()}] ` + text;
+          lineStartFlag = text.endsWith('\n');
+          appendSerial(text);
+        }
+      }
+    } catch (e) {
+      if (WSER.running) appendSerial(`\n[本机 USB 读取中断] ${e.message}\n`);
+    } finally {
+      try { reader.releaseLock(); } catch {}
+      WSER.reader = null;
+    }
+  }
+}
+
+async function webSerialPause(keepPort) {
+  WSER.running = false;
+  try { if (WSER.reader) await WSER.reader.cancel(); } catch {}
+  WSER.reader = null;
+  try { if (WSER.writer) { WSER.writer.releaseLock(); } } catch {}
+  WSER.writer = null;
+  try { if (WSER.port && WSER.port.readable === null && WSER.port.writable === null) { /* already closed */ } } catch {}
+  try { if (WSER.port) await WSER.port.close(); } catch {}
+  if (!keepPort) WSER.port = null;
+}
+
+async function webSerialStop() {
+  const had = !!WSER.port;
+  await webSerialPause(false);
+  refreshWebSerialButtons();
+  setSerialState('未连接');
+  if (had) appendSerial('\n[本机 USB] 已断开\n');
+}
+
+async function webSerialWrite(text) {
+  if (!WSER.port || !WSER.port.writable) return false;
+  try {
+    if (!WSER.writer) WSER.writer = WSER.port.writable.getWriter();
+    await WSER.writer.write(new TextEncoder().encode(text));
+    return true;
+  } catch (e) {
+    toast('写入本机串口失败: ' + e.message, 'err');
+    return false;
+  }
+}
+
+// esptool-js：浏览器里直接烧 ESP 系列
+async function loadEsptoolLib() {
+  if (S.esptool) return S.esptool;
+  const urls = ['/vendor/esptool-bundle.js', 'https://cdn.jsdelivr.net/npm/esptool-js@0.4.5/bundle.js'];
+  for (const url of urls) {
+    try {
+      const mod = await import(url);
+      if (mod && mod.ESPLoader && mod.Transport) { S.esptool = mod; return mod; }
+    } catch { /* 下一个 */ }
+  }
+  throw new Error('esptool-js 加载失败（Chrome 需要网络访问 CDN，或运行 scripts/vendor.sh）');
+}
+
+function webFlashDialog() {
+  if (!webSerialSupported()) return toast('Web Serial 不可用（Chrome/Edge + https 或 localhost）', 'err');
+  const mask = document.createElement('div');
+  mask.className = 'dialog-mask';
+  mask.innerHTML = `<div class="dialog" style="width:min(560px,94vw)">
+    <h3>ESP 直烧（浏览器本地 USB）</h3>
+    <p class="hint" style="margin:0 0 10px">
+      走 esptool-js，直接把固件写进插在<strong>这台设备</strong>上的 ESP 芯片。烧录期间会暂停串口监控。
+      其他芯片（STM32/AVR）请用“远端桥 + 服务端 PlatformIO”。
+    </p>
+    <div class="row"><label>固件文件（.bin）</label><input type="file" id="wfFile" accept=".bin,.img"></div>
+    <div class="row" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>写入地址</label><input id="wfAddr" type="text" value="0x0"></div>
+      <div><label>波特率</label>
+        <select id="wfBaud"><option>115200</option><option selected>460800</option><option>921600</option></select>
+      </div>
+    </div>
+    <div class="actions"><button class="ghost" data-x>取消</button><button class="primary" data-go>开始烧录</button></div>
+    <div class="hint" id="wfStatus" style="margin-top:8px;min-height:16px"></div>
+  </div>`;
+  document.body.appendChild(mask);
+  const status = (t) => { $('#wfStatus', mask).textContent = t; };
+  $('[data-x]', mask).onclick = () => mask.remove();
+  $('[data-go]', mask).onclick = async () => {
+    const file = $('#wfFile', mask).files[0];
+    if (!file) return status('先选一个 .bin 文件');
+    const address = $('#wfAddr', mask).value.trim() || '0x0';
+    const baud = Number($('#wfBaud', mask).value) || 460800;
+    const addrNum = Number(address);
+    if (!Number.isFinite(addrNum) || addrNum < 0) return status('地址格式不对，例如 0x0 或 0x10000');
+
+    // 拿本机串口：已连接就复用，否则现选一个
+    let port = WSER.port;
+    if (!port) {
+      try {
+        if (S.serialWs) disconnectSerial();
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: baud });
+        WSER.port = port;
+      } catch (e) {
+        return status('打开串口失败: ' + e.message);
+      }
+    } else {
+      await webSerialPause(true);
+    }
+    refreshWebSerialButtons();
+    setSerialState('烧录中', 'ok');
+    status('加载 esptool-js…');
+    let mod;
+    try {
+      mod = await loadEsptoolLib();
+    } catch (e) {
+      status(e.message);
+      return;
+    }
+    const data = new Uint8Array(await file.arrayBuffer());
+    const terminal = {
+      clean() {},
+      writeLine(l) { appendSerial(String(l) + '\n'); },
+      write(t) { appendSerial(String(t)); },
+    };
+    let transport;
+    try {
+      status('连接芯片…');
+      transport = new mod.Transport(port, false);
+      const loader = new mod.ESPLoader({ transport, baudrate: baud, terminal });
+      const chip = typeof loader.main === 'function' ? await loader.main() : await loader.connect();
+      status(`芯片: ${chip || '已连接'}，写入 ${file.name} → ${address}`);
+      await loader.writeFlash({
+        fileArray: [{ data, address: addrNum }],
+        flashSize: 'keep',
+        flashMode: 'keep',
+        flashFreq: 'keep',
+        eraseAll: false,
+        compress: true,
+        reportProgress: (idx, written, total) => {
+          status(`${Math.round((written / total) * 100)}%  (${written}/${total})`);
+        },
+        calculateMD5sum: false,
+      });
+      status('✅ 烧录完成，记得复位');
+      setMsg(`ESP 烧录完成 ${file.name}`, 'ok');
+    } catch (e) {
+      status('❌ ' + (e.message || String(e)));
+      setMsg('ESP 烧录失败', 'err');
+    } finally {
+      try { if (transport) await transport.disconnect(); } catch {}
+      WSER.port = null;
+      refreshWebSerialButtons();
+      setSerialState('未连接');
+    }
+  };
+}
+
 
 // ── 任务 ─────────────────────────────────────
 function showPanel(name) {
@@ -855,6 +1161,8 @@ function connectSerial() {
     setSerialState(`已连接 ${port} @ ${baud}`, 'ok');
     $('#serialConnect').textContent = '断开';
     $('#serialConnect').classList.remove('primary');
+    // 让顶栏的烧录端口跟随串口面板选择
+    if ([...$('#portSel').options].some((o) => o.value === port)) $('#portSel').value = port;
   };
   ws.onmessage = (ev) => {
     if (typeof ev.data === 'string') {
@@ -914,8 +1222,13 @@ function sendSerial() {
   const input = $('#serialSendInput');
   const text = input.value;
   if (!text) return;
-  if (!S.serialWs) { toast('串口未连接', 'err'); return; }
-  S.serialWs.send(JSON.stringify({ type: 'write', data: text + ($('#serialCRLF').checked ? '\r\n' : '') }));
+  const payload = text + ($('#serialCRLF').checked ? '\r\n' : '');
+  if (WSER.running) {
+    webSerialWrite(payload).then((ok) => { if (ok) input.value = ''; });
+    return;
+  }
+  if (!S.serialWs) { toast('串口未连接（远端桥请先在端口下拉里选中它）', 'err'); return; }
+  S.serialWs.send(JSON.stringify({ type: 'write', data: payload }));
   input.value = '';
 }
 
@@ -995,6 +1308,7 @@ async function loadDevices() {
   body.innerHTML = '<div class="empty">检测中…</div>';
   try {
     const d = await api('/api/devices');
+    const remData = await loadRemotes();
     $('#devHint').textContent = d.hint || '';
     let html = `<div class="section-title">串口 (${d.serialPorts.length})</div>`;
     if (d.serialPorts.length) {
@@ -1017,6 +1331,22 @@ async function loadDevices() {
       }
       html += '</tbody></table>';
     }
+    const links = remData.links || [];
+    html += `<div class="section-title">远端桥接 (${links.length})${remData.backend && remData.backend !== 'none' ? ` · 映射后端 ${escapeHtml(remData.backend)}` : ' · 缺 socat/python3'}</div>`;
+    if (links.length) {
+      html += `<table class="device-table"><thead><tr><th>别名</th><th>对端</th><th>状态</th><th>本地 PTY</th><th>操作</th></tr></thead><tbody>`;
+      for (const l of links) {
+        html += `<tr><td class="mono">${escapeHtml(l.name)}</td>
+          <td class="mono">${escapeHtml(l.host)}:${l.port}</td>
+          <td><span class="tag ${l.alive ? 'ok' : 'no'}">${l.alive ? '在线' : '离线'}</span></td>
+          <td class="mono" style="font-size:11px">${escapeHtml(l.path)}</td>
+          <td><button class="ghost" data-rmon="${escapeHtml(l.path)}">监控</button>
+              <button class="ghost" data-rdel="${escapeHtml(l.name)}">断开</button></td></tr>`;
+      }
+      html += '</tbody></table>';
+    } else {
+      html += `<div class="hint">把板子插在自己电脑上，跑 <span class="mono">node bridge/serial-bridge.js --device /dev/ttyUSB0 --port 9999</span>，然后点“⛓ 远端桥接”填入那台机器的 Tailscale 地址。</div>`;
+    }
     if ((d.errors || []).length) html += `<div class="section-title">警告</div><div class="hint">${escapeHtml(d.errors.join('；'))}</div>`;
     body.innerHTML = html;
     $$('[data-mon]', body).forEach((b) => {
@@ -1024,6 +1354,19 @@ async function loadDevices() {
         showPanel('serial');
         $('#serialPort').value = b.dataset.mon;
         connectSerial();
+      };
+    });
+    $$('[data-rmon]', body).forEach((b) => {
+      b.onclick = () => {
+        showPanel('serial');
+        $('#serialPort').value = b.dataset.rmon;
+        connectSerial();
+      };
+    });
+    $$('[data-rdel]', body).forEach((b) => {
+      b.onclick = async () => {
+        try { await api('/api/remote/' + encodeURIComponent(b.dataset.rdel), { method: 'DELETE' }); toast('已断开', 'ok'); loadDevices(); loadPorts(); }
+        catch (e) { toast(e.message, 'err'); }
       };
     });
   } catch (e) {
@@ -1166,6 +1509,11 @@ function initEvents() {
   };
 
   $('#serialConnect').onclick = connectSerial;
+  $('#btnRemote').onclick = remoteDialog;
+  $('#btnBridge').onclick = remoteDialog;
+  $('#devRemote').onclick = remoteDialog;
+  $('#btnWebSerial').onclick = webSerialToggle;
+  $('#btnWebFlash').onclick = webFlashDialog;
   $('#serialSend').onclick = sendSerial;
   $('#serialSendInput').onkeydown = (e) => { if (e.key === 'Enter') sendSerial(); };
   $('#serialClear').onclick = () => { $('#serialOut').textContent = ''; };

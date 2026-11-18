@@ -37,8 +37,11 @@ jobs:
           done
           cat /tmp/fd.log
 
-      - name: 冒烟测试
+      - name: 冒烟测试（REST + WS）
         run: FORGEDECK_TOKEN=ci-token node scripts/smoke.js http://127.0.0.1:8083
+
+      - name: 冒烟测试（本机 USB 桥接）
+        run: FORGEDECK_TOKEN=ci-token node scripts/smoke-bridge.js http://127.0.0.1:8083
 
       - name: 失败日志
         if: failure()
