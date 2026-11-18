@@ -8,6 +8,9 @@
 
 `零 npm 依赖` · `单进程` · `Node ≥ 18` · `MIT`
 
+[![CI](https://github.com/shaojun366/forge-deck/actions/workflows/ci.yml/badge.svg)](https://github.com/shaojun366/forge-deck/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-ff7a3d.svg)](LICENSE)
+
 **二开自由**：MIT 许可，Fork、魔改、换皮、商用都行，不用先问。想合回来就提 PR——小改动直接提，不必先开 issue。见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 </div>
