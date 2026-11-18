@@ -8,6 +8,8 @@
 
 `零 npm 依赖` · `单进程` · `Node ≥ 18` · `MIT`
 
+**二开自由**：MIT 许可，Fork、魔改、换皮、商用都行，不用先问。想合回来就提 PR——小改动直接提，不必先开 issue。见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 </div>
 
 ---
@@ -48,7 +50,7 @@ ForgeDeck 由两个部分拼成一台"远端固件工作台"：
 **服务器端**：
 
 ```bash
-git clone https://github.com/YOUR_GITHUB/forge-deck.git
+git clone https://github.com/shaojun366/forge-deck.git
 cd forge-deck
 bash scripts/install.sh        # 生成 config.json（随机令牌）、工作区、可选 systemd
 node server/main.js            # http://127.0.0.1:8083
@@ -218,17 +220,21 @@ forge-deck/
 └── workspace/         # 你的工程（已在 .gitignore）
 ```
 
-## 从零到公开仓库
+## 仓库与分发
 
 ```bash
+git clone https://github.com/shaojun366/forge-deck.git
 cd forge-deck
-git init -b main && git add -A
-git commit -m "feat: ForgeDeck — remote firmware workbench"
-# 先把 README 里的 YOUR_GITHUB 换成你的账号
-gh repo create forge-deck --public --source=. --remote=origin --push
 ```
 
-`.gitignore` 已排除 `config.json`、`workspace/**`、`web/vendor/`、`data/`。
+想发自己的版本：
+
+```bash
+# fork 之后
+git remote set-url origin git@github.com:<你的账号>/forge-deck.git
+```
+
+`.gitignore` 已排除 `config.json`（含令牌）、`workspace/**`（你的工程）、`web/vendor/`（前端缓存）、`data/`（桥接状态）。
 
 ## 常见问题
 
@@ -260,6 +266,14 @@ gh repo create forge-deck --public --source=. --remote=origin --push
 - [ ] 桥接端 WebSocket 模式（穿 HTTP 反代，不占裸 TCP 端口）
 - [ ] 烧录队列与"板卡占用"提示（多人共用实验室）
 - [ ] OTA 推送到已联网的板子
+
+## 二次开发与贡献
+
+- **许可**：MIT。保留版权声明与许可证文本即可自由使用、修改、分发、商用。
+- **Fork**：随便 fork，改成自己的私有工具也不违反任何东西。
+- **PR**：欢迎直接 push 到 `feat/*` / `fix/*` 分支并开 PR。没有 CLA，不需要签任何协议。
+- **Issue**：模板已经分好「Bug」和「功能建议」，把 `/api/jobs/:id` 的日志贴进来最快定位。
+- **约定**：零运行时依赖、不拼 shell、路径必须过 `resolveIn`、前端必须有降级路径——细节见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## License
 

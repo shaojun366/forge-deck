@@ -1,0 +1,69 @@
+name: Bug 报告
+description: 某个功能不工作，或者行为不符合预期
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先确认这几件事能省一半时间：
+        1. `curl http://127.0.0.1:8083/api/health` 通不通（免鉴权，能排除服务和 token 的问题）
+        2. 板子是插在**服务器**上，还是插在你电脑上（后者要走 bridge 或 Web Serial）
+        3. 服务端日志 `journalctl --user -u forge-deck -f` 有没有报错
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 哪一块出问题
+      options:
+        - 文件编辑 / 文件树
+        - 编译（build）
+        - 烧录（flash / erase）
+        - 串口监控
+        - 终端
+        - 远端桥（bridge / /api/remote）
+        - Web Serial / ESP 直烧
+        - Tailscale 访问 / 登录
+        - 设备识别（/api/devices）
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 期望 vs 实际。有报错就贴原文（`/api/jobs/:id` 的日志最有用）
+      placeholder: |
+        期望：点烧录后写入 ESP32
+        实际：提示 “port not found”，任务日志如下…
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 接一台 ESP32（CH340）
+        2. 端口选 /dev/ttyUSB0
+        3. 点烧录
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: 环境
+      description: OS / Node 版本 / 浏览器 / 板子与串口芯片
+      placeholder: Ubuntu 24.04 · Node 22 · Chrome 130 · ESP32-S3 · CP2102
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 其它线索
+      description: `/api/ports`、`/api/backends`、`/api/devices` 的输出（注意去掉令牌）
+      render: json
+    validations:
+      required: false

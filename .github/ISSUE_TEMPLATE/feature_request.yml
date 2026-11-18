@@ -1,0 +1,42 @@
+name: 功能建议
+description: 想要一个新能力，或者觉得现在的设计可以更好
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到的场景
+      description: 别从"加个按钮"开始，先说你在什么情况下别扭
+      placeholder: |
+        我在实验室有 3 块板子轮流测，每次都要手动改端口，容易选错。
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你想象的解法
+      placeholder: 端口下拉显示板子的 USB 序列号，并且记住上次选择。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 影响面
+      options:
+        - 只影响前端
+        - 需要改后端接口
+        - 需要新依赖（请说明为什么无法零依赖实现）
+        - 不确定
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: 你愿意自己动手吗
+      options:
+        - label: 我可以提 PR
+        - label: 我可以帮忙测试
+        - label: 我只是提个想法
