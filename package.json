@@ -1,0 +1,20 @@
+{
+  "name": "forge-deck",
+  "version": "0.3.0",
+  "description": "Remote firmware workbench: edit, build, flash and monitor USB hardware from any browser over Tailscale.",
+  "keywords": ["ide", "firmware", "embedded", "platformio", "esp32", "stm32", "arduino", "tailscale", "remote", "webide"],
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": { "forge-deck": "server/main.js" },
+  "main": "server/main.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server/main.js",
+    "dev": "node --watch server/main.js",
+    "smoke": "node scripts/smoke.js",
+    "vendor": "bash scripts/vendor.sh"
+  },
+  "files": ["server", "web", "scripts", "docs", "config.example.json"],
+  "dependencies": {},
+  "optionalDependencies": {}
+}

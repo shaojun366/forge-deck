@@ -1,0 +1,44 @@
+{
+  "_comment": "复制为 config.json 后按需修改。环境变量优先级更高：FORGEDECK_TOKEN / FORGEDECK_PORT / FORGEDECK_HOST / FORGEDECK_WORKSPACE",
+
+  "host": "127.0.0.1",
+  "port": 8083,
+  "workspace": "./workspace",
+  "token": "CHANGE_ME_please_generate_with_openssl_rand_hex_32",
+
+  "publicUrl": "",
+  "siteName": "ForgeDeck",
+
+  "tailscale": {
+    "enabled": true,
+    "whoisAuth": true,
+    "allowUsers": [],
+    "allowTags": [],
+    "allowAnyTailnetDevice": true
+  },
+
+  "tools": {
+    "pio": "",
+    "esptool": "",
+    "avrdude": "",
+    "stflash": "st-flash",
+    "dfuUtil": "dfu-util",
+    "openocd": "openocd"
+  },
+
+  "serial": {
+    "defaultBaud": 115200,
+    "allowPorts": []
+  },
+
+  "shell": {
+    "enabled": true,
+    "shell": ""
+  },
+
+  "limits": {
+    "uploadMB": 32,
+    "fileMB": 8,
+    "jobsKeep": 30
+  }
+}

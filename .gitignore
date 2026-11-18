@@ -1,0 +1,14 @@
+config.json
+*.log
+node_modules/
+.vendor/
+.DS_Store
+.env
+.env.local
+*.pem
+*.key
+data/
+coverage/
+web/vendor/
+workspace/**
+!workspace/.gitkeep

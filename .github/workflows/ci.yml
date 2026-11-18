@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 语法检查
+        run: |
+          for f in server/*.js web/app.js scripts/smoke.js; do node --check "$f"; done
+
+      - name: 准备配置
+        run: |
+          cp config.example.json config.json
+          node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('config.json','utf8'));c.token='ci-token';fs.writeFileSync('config.json',JSON.stringify(c,null,2))"
+
+      - name: 启动服务
+        run: |
+          FORGEDECK_TOKEN=ci-token FORGEDECK_PORT=8083 node server/main.js > /tmp/fd.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8083/api/health && break
+            sleep 1
+          done
+          cat /tmp/fd.log
+
+      - name: 冒烟测试
+        run: FORGEDECK_TOKEN=ci-token node scripts/smoke.js http://127.0.0.1:8083
+
+      - name: 失败日志
+        if: failure()
+        run: cat /tmp/fd.log || true

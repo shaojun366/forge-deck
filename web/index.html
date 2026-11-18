@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>ForgeDeck — 远端固件工作台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%A5%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- 登录 -->
+<div class="overlay hidden" id="loginOverlay">
+  <div class="login-card">
+    <h2>🔥 ForgeDeck</h2>
+    <p id="loginHint">输入访问令牌以连接服务器上的工作区。令牌由服务端 <span class="mono">config.json</span> 的 <span class="mono">token</span> 或环境变量 <span class="mono">FORGEDECK_TOKEN</span> 提供。</p>
+    <input type="password" id="tokenInput" placeholder="访问令牌" autocomplete="current-password">
+    <div class="err" id="loginErr"></div>
+    <button class="primary" id="loginBtn" style="width:100%;padding:9px">连接</button>
+  </div>
+</div>
+
+<!-- 顶栏 -->
+<header class="topbar">
+  <div class="brand"><span class="spark">🔥</span>ForgeDeck<span class="ver" id="verLabel">v0.3</span></div>
+  <div class="vsep"></div>
+  <select id="projectSel" title="选择工程"><option value="">工程…</option></select>
+  <select id="envSel" title="构建环境"><option value="">env…</option></select>
+  <select id="portSel" title="服务器上的串口"><option value="">端口…</option></select>
+  <button class="icon" id="btnPorts" title="刷新端口">⟳</button>
+  <div class="grow"></div>
+  <button id="btnBuild" title="编译 (Ctrl+B)">编译</button>
+  <button id="btnFlash" class="primary" title="编译并烧录 (Ctrl+Enter)">⚡ 烧录</button>
+  <button id="btnErase" class="danger" title="擦除芯片">擦除</button>
+  <div class="grow"></div>
+  <button class="ghost" id="btnDevices" title="USB / 串口设备">设备</button>
+  <button class="ghost" id="btnAdvanced" title="高级烧录">⚙︎</button>
+  <span class="pill" id="tailPill" title="Tailnet 状态"><span class="dot"></span><span id="tailText">检查中</span></span>
+  <span class="pill" id="whoPill">—</span>
+  <button class="ghost icon" id="btnLogout" title="退出登录">⏏</button>
+</header>
+
+<!-- 主区 -->
+<div class="main">
+  <aside class="sidebar" id="sidebar">
+    <div class="side-head">
+      <span class="title">资源管理器</span>
+      <button class="ghost icon" data-act="refresh" title="刷新">⟳</button>
+      <button class="ghost icon" data-act="newfile" title="新建文件（当前展开目录）">＋</button>
+      <button class="ghost icon" data-act="newdir" title="新建目录">▤</button>
+      <button class="ghost icon" data-act="upload" title="上传文件">⬆</button>
+      <button class="ghost icon" data-act="root" title="回到工作区根">⌂</button>
+    </div>
+    <div class="searchbar"><input type="text" id="searchInput" placeholder="搜索文件 / 内容  (Ctrl+Shift+F)"></div>
+    <div class="tree" id="tree"><div class="empty">加载中…</div></div>
+    <div class="search-results hidden" id="searchResults"></div>
+  </aside>
+
+  <section class="editor-area">
+    <div class="tabs" id="tabs"></div>
+    <div class="editor-wrap">
+      <div id="editor"></div>
+      <div class="welcome" id="welcome">
+        <h1>ForgeDeck</h1>
+        <div class="sub">从左侧选择文件开始编辑 · <kbd>Ctrl+S</kbd> 保存 · <kbd>Ctrl+Shift+F</kbd> 搜索 · <kbd>Ctrl+`</kbd> 终端</div>
+        <div class="sub">编译与烧录在服务器上执行，目标板 USB 直连服务器</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- 底部面板 -->
+<div class="resizer" id="resizer"></div>
+<div class="bottom" id="bottom">
+  <div class="panel-tabs">
+    <div class="ptab active" data-panel="output">输出</div>
+    <div class="ptab" data-panel="serial">串口监控</div>
+    <div class="ptab" data-panel="terminal">终端</div>
+    <div class="ptab" data-panel="devices">设备</div>
+    <div class="ptab" data-panel="tailnet">Tailnet</div>
+    <div class="ptab" data-panel="jobs">任务</div>
+    <div class="grow"></div>
+    <button class="ghost icon" id="btnClearPanel" title="清空当前面板">🧽</button>
+  </div>
+  <div class="panels">
+    <!-- 输出 -->
+    <div class="panel active" data-panel="output">
+      <div class="toolbar">
+        <span class="hint" id="outputTitle">等待任务…</span>
+        <div class="grow"></div>
+        <button class="ghost" id="btnCancelJob">停止</button>
+      </div>
+      <pre class="log" id="output"></pre>
+    </div>
+    <!-- 串口 -->
+    <div class="panel" data-panel="serial">
+      <div class="toolbar">
+        <select id="serialPort"><option value="">串口…</option></select>
+        <select id="serialBaud">
+          <option>9600</option><option>57600</option><option>74880</option>
+          <option selected>115200</option><option>230400</option><option>460800</option><option>921600</option>
+        </select>
+        <button id="serialConnect" class="primary">连接</button>
+        <button id="serialReset" title="DTR 复位">↺ 复位</button>
+        <label class="hint"><input type="checkbox" id="serialHex"> HEX</label>
+        <label class="hint"><input type="checkbox" id="serialTime" checked> 时间戳</label>
+        <button class="ghost" id="serialClear">清空</button>
+        <div class="grow"></div>
+        <span class="tag" id="serialState">未连接</span>
+      </div>
+      <pre class="serial-out" id="serialOut"></pre>
+      <div class="serial-input">
+        <input type="text" id="serialSendInput" placeholder="发送到串口（回车发送）">
+        <label class="hint"><input type="checkbox" id="serialCRLF" checked> \r\n</label>
+        <button id="serialSend">发送</button>
+      </div>
+    </div>
+    <!-- 终端 -->
+    <div class="panel" data-panel="terminal">
+      <div id="termHost"></div>
+    </div>
+    <!-- 设备 -->
+    <div class="panel" data-panel="devices">
+      <div class="toolbar">
+        <button id="devRefresh">刷新设备</button>
+        <span class="hint" id="devHint"></span>
+        <div class="grow"></div>
+        <span class="hint">USB 必须插在服务器上</span>
+      </div>
+      <div class="panel-body" id="devBody"><div class="empty">点“刷新设备”检测</div></div>
+    </div>
+    <!-- Tailnet -->
+    <div class="panel" data-panel="tailnet">
+      <div class="panel-body" id="tailBody"><div class="empty">读取中…</div></div>
+    </div>
+    <!-- 任务 -->
+    <div class="panel" data-panel="jobs">
+      <div class="panel-body" id="jobsBody"><div class="empty">暂无任务</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="statusbar">
+  <span id="stConn">未连接</span>
+  <span class="vsep"></span>
+  <span id="stCursor">—</span>
+  <span class="vsep"></span>
+  <span id="stFile">—</span>
+  <div class="grow"></div>
+  <span id="stMsg">就绪</span>
+  <span class="vsep"></span>
+  <span id="stRoot" class="mono"></span>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+<input type="file" id="filePicker" class="hidden" multiple>
+
+<script src="/app.js" defer></script>
+</body>
+</html>
